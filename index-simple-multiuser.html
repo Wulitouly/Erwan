@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>贰万UCLA店缺货统计系统 - 简化多用户版</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Firebase SDK - 使用Realtime Database -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🍽️ 贰万UCLA店缺货统计系统</h1>
+            <p>简化多用户版 - 使用Realtime Database实现实时同步</p>
+            <div class="user-info">
+                <div class="connection-status" id="connectionStatus">
+                    <span class="status-indicator offline">●</span>
+                    <span>连接中...</span>
+                </div>
+                <div class="user-identity" id="userIdentity">
+                    <span>👤 用户身份：</span>
+                    <input type="text" id="userName" placeholder="请输入您的姓名" maxlength="20">
+                    <button id="setUserName" class="user-btn">确认身份</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- 缺货信息输入区域 -->
+            <div class="input-section">
+                <h2>📝 上报缺货情况</h2>
+                <form id="shortageForm" class="shortage-form">
+                    <div class="form-group">
+                        <label for="productName">产品名称 *</label>
+                        <input type="text" id="productName" name="productName" required 
+                               placeholder="例如：肘子肉（单次只填报只写一项）">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="category">产品类别 *</label>
+                        <select id="category" name="category" required>
+                            <option value="">请选择类别</option>
+                            <option value="肉类&肉汤">🥩 肉类&肉汤</option>
+                            <option value="关东煮&卤味">🍢 关东煮&卤味</option>
+                            <option value="主食">🍚 主食</option>
+                            <option value="蔬菜">🥬 蔬菜</option>
+                            <option value="调料">🧂 调料</option>
+                            <option value="饮品">🥤 饮品</option>
+                            <option value="包装用具">📦 包装用具</option>
+                            <option value="其他">📦 其他</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="shortageLevel">缺货程度 *</label>
+                        <select id="shortageLevel" name="shortageLevel" required>
+                            <option value="">请选择缺货程度</option>
+                            <option value="完全缺货">🔴 完全缺货（备注说明剩余）</option>
+                            <option value="严重">🔵 严重缺货（备注说明剩余）</option>
+                            <option value="轻微">🟡 轻微缺货 (3-5天用量)</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="reporter">上报人 *</label>
+                        <input type="text" id="reporter" name="reporter" required 
+                               placeholder="请先确认用户身份" readonly>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="notes">备注信息</label>
+                        <textarea id="notes" name="notes" rows="3" 
+                                  placeholder="补充说明，如 只剩一盒"></textarea>
+                    </div>
+                    
+                    <button type="submit" class="submit-btn">📤 提交缺货信息</button>
+                </form>
+            </div>
+
+            <!-- 实时显示区域 -->
+            <div class="display-section">
+                <h2>📊 今日缺货统计</h2>
+                <div class="stats-overview">
+                    <div class="stat-card">
+                        <span class="stat-number" id="totalShortages">0</span>
+                        <span class="stat-label">总缺货项</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="urgentShortages">0</span>
+                        <span class="stat-label">紧急缺货</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-number" id="pendingRestock">0</span>
+                        <span class="stat-label">待补货</span>
+                    </div>
+                </div>
+                
+                <div class="recent-shortages">
+                    <h3>📋 当日上报</h3>
+                    <div id="recentList" class="shortage-list">
+                        <p class="no-data">暂无缺货记录</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 导出功能 -->
+        <div class="export-section">
+            <h2>📋 数据导出</h2>
+            <div class="export-buttons">
+                <button id="exportExcel" class="export-btn">📊 导出Excel报表</button>
+                <button id="exportSummary" class="export-btn">📝 导出汇总报告</button>
+                <button id="historyData" class="export-btn">📚 历史数据</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 修改/删除弹窗 -->
+    <div id="actionModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>选择操作</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>请选择要对这条缺货记录进行的操作：</p>
+                <div class="modal-actions">
+                    <button id="editBtn" class="modal-btn edit-btn">
+                        <span class="btn-text">修改</span>
+                    </button>
+                    <button id="deleteBtn" class="modal-btn delete-btn">
+                        <span class="btn-text">删除</span>
+                    </button>
+                    <button id="markRestockedBtn" class="modal-btn restock-btn">
+                        <span class="btn-text">标记已补货</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 历史数据弹窗 -->
+    <div id="historyModal" class="modal">
+        <div class="modal-content history-modal">
+            <div class="modal-header">
+                <h3>📚 历史缺货记录</h3>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="history-controls">
+                    <select id="historyDateSelect" class="history-select">
+                        <option value="">选择日期查看</option>
+                    </select>
+                    <button id="exportHistoryBtn" class="modal-btn edit-btn">导出</button>
+                </div>
+                <div id="historyContent" class="history-content">
+                    <p class="no-data">请选择日期查看历史记录</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 简化多用户版 - 使用Realtime Database
+        class SimpleMultiUserTracker {
+            constructor() {
+                this.shortages = [];
+                this.currentEditingId = null;
+                this.currentUser = null;
+                this.isOnline = false;
+                this.database = null;
+                this.init();
+            }
+
+            // 初始化
+            async init() {
+                this.bindEvents();
+                await this.initializeFirebase();
+                this.loadDataFromLocal();
+                this.updateDisplay();
+            }
+
+            // 初始化Firebase连接
+            async initializeFirebase() {
+                try {
+                    // 检查Firebase是否可用
+                    if (typeof firebase === 'undefined') {
+                        console.warn('Firebase SDK未加载，使用本地存储模式');
+                        this.isOnline = false;
+                        this.updateConnectionStatus();
+                        return;
+                    }
+
+                    // Firebase 配置
+                    const firebaseConfig = {
+                        apiKey: "AIzaSyDaEFljR6wxQaPj_4YH7hWFgR6ZGU8_2mY",
+                        authDomain: "erwan-inventory-system.firebaseapp.com",
+                        projectId: "erwan-inventory-system",
+                        storageBucket: "erwan-inventory-system.firebasestorage.app",
+                        messagingSenderId: "707188745863",
+                        appId: "1:707188745863:web:f4c9cbf0e84b03a0daba22",
+                        measurementId: "G-M8KHPCT1L0"
+                    };
+
+                    // 初始化Firebase
+                    firebase.initializeApp(firebaseConfig);
+                    this.database = firebase.database();
+                    
+                    // 测试连接
+                    await this.database.ref('test').set({ message: 'test' });
+                    
+                    this.isOnline = true;
+                    this.updateConnectionStatus();
+                    console.log('Firebase Realtime Database连接成功');
+                    
+                    // 设置实时监听
+                    this.setupRealtimeListener();
+                    
+                } catch (error) {
+                    console.warn('Firebase连接失败，使用本地存储模式:', error);
+                    this.isOnline = false;
+                    this.updateConnectionStatus();
+                }
+            }
+
+            // 设置实时监听器
+            setupRealtimeListener() {
+                if (!this.isOnline || !this.database) return;
+
+                this.database.ref('shortages').on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    this.shortages = data ? Object.values(data) : [];
+                    this.updateDisplay();
+                    console.log('实时数据同步:', this.shortages.length, '条记录');
+                });
+            }
+
+            // 更新连接状态显示
+            updateConnectionStatus() {
+                const statusEl = document.getElementById('connectionStatus');
+                if (!statusEl) return;
+
+                const indicator = statusEl.querySelector('.status-indicator');
+                const text = statusEl.querySelector('span:last-child');
+
+                if (this.isOnline) {
+                    indicator.className = 'status-indicator online';
+                    text.textContent = '已连接 - 实时同步';
+                } else {
+                    indicator.className = 'status-indicator offline';
+                    text.textContent = '离线模式 - 本地存储';
+                }
+            }
+
+            // 绑定事件
+            bindEvents() {
+                // 用户身份设置
+                document.getElementById('setUserName').addEventListener('click', () => {
+                    this.setUserIdentity();
+                });
+
+                document.getElementById('userName').addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        this.setUserIdentity();
+                    }
+                });
+
+                // 表单提交
+                document.getElementById('shortageForm').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.submitShortage();
+                });
+
+                // 导出按钮
+                document.getElementById('exportExcel').addEventListener('click', () => {
+                    this.exportToExcel();
+                });
+
+                document.getElementById('exportSummary').addEventListener('click', () => {
+                    this.exportSummary();
+                });
+
+                document.getElementById('historyData').addEventListener('click', () => {
+                    this.showHistoryModal();
+                });
+
+                // 弹窗事件
+                document.getElementById('editBtn').addEventListener('click', () => {
+                    this.editShortage();
+                });
+
+                document.getElementById('deleteBtn').addEventListener('click', () => {
+                    this.deleteShortage();
+                });
+
+                document.getElementById('markRestockedBtn').addEventListener('click', () => {
+                    this.markAsRestocked();
+                });
+
+                // 关闭弹窗
+                document.querySelector('.close').addEventListener('click', () => {
+                    this.closeModal();
+                });
+
+                document.getElementById('actionModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'actionModal') {
+                        this.closeModal();
+                    }
+                });
+            }
+
+            // 设置用户身份
+            setUserIdentity() {
+                const userName = document.getElementById('userName').value.trim();
+                if (!userName) {
+                    this.showMessage('请输入您的姓名！', 'warning');
+                    return;
+                }
+
+                this.currentUser = userName;
+                localStorage.setItem('currentUser', userName);
+                
+                // 自动填充上报人字段
+                document.getElementById('reporter').value = userName;
+                document.getElementById('reporter').placeholder = `当前用户：${userName}`;
+                document.getElementById('reporter').readOnly = true;
+                
+                this.showMessage(`身份确认成功：${userName}`, 'success');
+                
+                // 隐藏用户身份设置
+                const userIdentity = document.getElementById('userIdentity');
+                userIdentity.innerHTML = `
+                    <span>👤 当前用户：${userName}</span>
+                    <button id="changeUser" class="user-btn">切换用户</button>
+                `;
+                
+                document.getElementById('changeUser').addEventListener('click', () => {
+                    this.resetUserIdentity();
+                });
+            }
+
+            // 重置用户身份
+            resetUserIdentity() {
+                this.currentUser = null;
+                localStorage.removeItem('currentUser');
+                
+                // 清空上报人字段
+                document.getElementById('reporter').value = '';
+                document.getElementById('reporter').placeholder = '请先确认用户身份';
+                document.getElementById('reporter').readOnly = true;
+                
+                const userIdentity = document.getElementById('userIdentity');
+                userIdentity.innerHTML = `
+                    <span>👤 用户身份：</span>
+                    <input type="text" id="userName" placeholder="请输入您的姓名" maxlength="20">
+                    <button id="setUserName" class="user-btn">确认身份</button>
+                `;
+                
+                document.getElementById('setUserName').addEventListener('click', () => {
+                    this.setUserIdentity();
+                });
+            }
+
+            // 提交缺货信息
+            async submitShortage() {
+                if (!this.currentUser) {
+                    this.showMessage('请先确认您的身份！', 'warning');
+                    return;
+                }
+
+                const form = document.getElementById('shortageForm');
+                const formData = new FormData(form);
+                
+                const now = new Date();
+                const laTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                const laDateStr = laTime.toISOString().split('T')[0];
+                const laTimestamp = laTime.toLocaleString('zh-CN');
+                
+                const shortage = {
+                    productName: formData.get('productName'),
+                    category: formData.get('category'),
+                    shortageLevel: formData.get('shortageLevel'),
+                    reporter: this.currentUser,
+                    notes: formData.get('notes'),
+                    timestamp: laTimestamp,
+                    date: laDateStr,
+                    isRestocked: false
+                };
+
+                // 验证必填字段
+                if (!shortage.productName || !shortage.category || !shortage.shortageLevel) {
+                    this.showMessage('请填写所有必填字段！', 'warning');
+                    return;
+                }
+
+                try {
+                    if (this.isOnline && this.database) {
+                        // 在线模式：保存到Firebase
+                        const newShortageRef = this.database.ref('shortages').push();
+                        await newShortageRef.set(shortage);
+                        this.showMessage('缺货信息提交成功！', 'success');
+                    } else {
+                        // 离线模式：保存到本地
+                        shortage.id = Date.now();
+                        this.shortages.push(shortage);
+                        this.saveDataToLocal();
+                        this.updateDisplay();
+                        this.showMessage('缺货信息提交成功！', 'success');
+                    }
+
+                    form.reset();
+                    document.getElementById('reporter').value = this.currentUser;
+                    document.getElementById('reporter').readOnly = true;
+                    
+                } catch (error) {
+                    console.error('提交失败:', error);
+                    this.showMessage('提交失败，请重试！', 'error');
+                }
+            }
+
+            // 更新显示
+            updateDisplay() {
+                this.updateStats();
+                this.updateRecentList();
+            }
+
+            // 更新统计数据
+            updateStats() {
+                const now = new Date();
+                const laTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                const todayStr = laTime.toISOString().split('T')[0];
+                
+                const todayShortages = this.shortages.filter(s => s.date === todayStr);
+                
+                const totalShortages = todayShortages.length;
+                const urgentShortages = todayShortages.filter(s => 
+                    s.shortageLevel === '严重' || s.shortageLevel === '完全缺货'
+                ).length;
+                
+                const pendingRestock = this.shortages.filter(s => !s.isRestocked).length;
+
+                document.getElementById('totalShortages').textContent = totalShortages;
+                document.getElementById('urgentShortages').textContent = urgentShortages;
+                document.getElementById('pendingRestock').textContent = pendingRestock;
+            }
+
+            // 更新当日上报列表
+            updateRecentList() {
+                const recentList = document.getElementById('recentList');
+                
+                const now = new Date();
+                const laTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+                const todayStr = laTime.toISOString().split('T')[0];
+                
+                const todayShortages = this.shortages
+                    .filter(s => s.date === todayStr && !s.isRestocked)
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+                if (todayShortages.length === 0) {
+                    recentList.innerHTML = '<p class="no-data">今日暂无缺货记录</p>';
+                    return;
+                }
+
+                recentList.innerHTML = todayShortages.map(shortage => `
+                    <div class="shortage-item ${this.getUrgencyClass(shortage.shortageLevel)}" data-id="${shortage.id || 'temp'}" style="cursor: pointer;">
+                        <div class="shortage-header">
+                            <span class="product-name">${shortage.productName}</span>
+                            <span class="shortage-level ${shortage.shortageLevel}">${this.getShortageLevelText(shortage.shortageLevel)}</span>
+                        </div>
+                        <div class="shortage-details">
+                            <div><strong>类别:</strong> ${shortage.category}</div>
+                            <div><strong>上报人:</strong> ${shortage.reporter}</div>
+                            <div><strong>时间:</strong> ${shortage.timestamp}</div>
+                            ${shortage.notes ? `<div><strong>备注:</strong> ${shortage.notes}</div>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+
+                // 为每个缺货记录添加点击事件
+                recentList.querySelectorAll('.shortage-item').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        const id = item.dataset.id;
+                        this.showActionModal(id);
+                    });
+                });
+            }
+
+            // 获取紧急程度样式类
+            getUrgencyClass(level) {
+                if (level === '严重' || level === '完全缺货') return 'urgent';
+                return '';
+            }
+
+            // 获取缺货程度文本
+            getShortageLevelText(level) {
+                const levelMap = {
+                    '轻微': '🟡 轻微',
+                    '严重': '🔵 严重',
+                    '完全缺货': '🔴 完全缺货'
+                };
+                return levelMap[level] || level;
+            }
+
+            // 显示操作弹窗
+            showActionModal(id) {
+                this.currentEditingId = id;
+                document.getElementById('actionModal').style.display = 'block';
+            }
+
+            // 关闭弹窗
+            closeModal() {
+                document.getElementById('actionModal').style.display = 'none';
+            }
+
+            // 编辑缺货记录
+            editShortage() {
+                if (!this.currentEditingId) return;
+                
+                const shortage = this.shortages.find(s => (s.id || 'temp') === this.currentEditingId);
+                if (!shortage) return;
+
+                // 填充表单
+                document.getElementById('productName').value = shortage.productName;
+                document.getElementById('category').value = shortage.category;
+                document.getElementById('shortageLevel').value = shortage.shortageLevel;
+                document.getElementById('reporter').value = shortage.reporter;
+                document.getElementById('notes').value = shortage.notes || '';
+
+                // 更新提交按钮文本
+                const submitBtn = document.querySelector('.submit-btn');
+                submitBtn.textContent = '✏️ 修改缺货信息';
+                submitBtn.style.background = 'linear-gradient(135deg, #f39c12, #e67e22)';
+
+                // 滚动到表单
+                document.querySelector('.input-section').scrollIntoView({ behavior: 'smooth' });
+                
+                this.closeModal();
+                this.showMessage('请修改表单中的信息，然后点击修改按钮', 'info');
+            }
+
+            // 删除缺货记录
+            async deleteShortage() {
+                if (!this.currentEditingId) return;
+                
+                if (confirm('确定要删除这条缺货记录吗？')) {
+                    try {
+                        if (this.isOnline && this.database) {
+                            // 在线模式：从Firebase删除
+                            const shortage = this.shortages.find(s => (s.id || 'temp') === this.currentEditingId);
+                            if (shortage && shortage.firebaseKey) {
+                                await this.database.ref('shortages').child(shortage.firebaseKey).remove();
+                            }
+                        } else {
+                            // 离线模式：从本地删除
+                            this.shortages = this.shortages.filter(s => (s.id || 'temp') !== this.currentEditingId);
+                            this.saveDataToLocal();
+                        }
+                        
+                        this.updateDisplay();
+                        this.closeModal();
+                        this.showMessage('缺货记录已删除！', 'warning');
+                    } catch (error) {
+                        console.error('删除失败:', error);
+                        this.showMessage('删除失败，请重试！', 'error');
+                    }
+                }
+            }
+
+            // 标记为已补货
+            async markAsRestocked() {
+                if (!this.currentEditingId) return;
+                
+                const shortage = this.shortages.find(s => (s.id || 'temp') === this.currentEditingId);
+                if (!shortage) return;
+
+                if (shortage.isRestocked) {
+                    this.showMessage('该记录已经标记为已补货！', 'info');
+                    return;
+                }
+
+                if (confirm('确定要将此商品标记为已补货吗？')) {
+                    try {
+                        shortage.isRestocked = true;
+                        shortage.restockedTime = new Date().toLocaleString('zh-CN');
+
+                        if (this.isOnline && this.database) {
+                            // 在线模式：更新Firebase
+                            if (shortage.firebaseKey) {
+                                await this.database.ref('shortages').child(shortage.firebaseKey).update({
+                                    isRestocked: true,
+                                    restockedTime: shortage.restockedTime
+                                });
+                            }
+                        } else {
+                            // 离线模式：更新本地
+                            this.saveDataToLocal();
+                        }
+
+                        this.updateDisplay();
+                        this.closeModal();
+                        this.showMessage('已标记为已补货！', 'success');
+                    } catch (error) {
+                        console.error('标记失败:', error);
+                        this.showMessage('标记失败，请重试！', 'error');
+                    }
+                }
+            }
+
+            // 从本地存储加载数据
+            loadDataFromLocal() {
+                const data = localStorage.getItem('restaurantShortages');
+                this.shortages = data ? JSON.parse(data) : [];
+            }
+
+            // 保存数据到本地存储
+            saveDataToLocal() {
+                localStorage.setItem('restaurantShortages', JSON.stringify(this.shortages));
+            }
+
+            // 导出Excel报表
+            exportToExcel() {
+                const today = new Date().toISOString().split('T')[0];
+                const todayShortages = this.shortages.filter(s => s.date === today);
+                
+                if (todayShortages.length === 0) {
+                    alert('今日暂无缺货数据可导出！');
+                    return;
+                }
+
+                const headers = ['产品名称', '类别', '缺货程度', '上报人', '备注', '上报时间'];
+                const csvContent = [
+                    headers.join(','),
+                    ...todayShortages.map(s => [
+                        s.productName,
+                        s.category,
+                        s.shortageLevel,
+                        s.reporter,
+                        s.notes || '',
+                        s.timestamp
+                    ].map(field => `"${field}"`).join(','))
+                ].join('\n');
+
+                this.downloadFile(csvContent, `缺货统计_${today}.csv`, 'text/csv');
+                this.showMessage('Excel报表导出成功！', 'success');
+            }
+
+            // 导出汇总报告
+            exportSummary() {
+                const today = new Date().toISOString().split('T')[0];
+                const todayShortages = this.shortages.filter(s => s.date === today);
+                
+                if (todayShortages.length === 0) {
+                    alert('今日暂无缺货数据可导出！');
+                    return;
+                }
+
+                const categoryStats = {};
+                const levelStats = {};
+                
+                todayShortages.forEach(s => {
+                    categoryStats[s.category] = (categoryStats[s.category] || 0) + 1;
+                    levelStats[s.shortageLevel] = (levelStats[s.shortageLevel] || 0) + 1;
+                });
+
+                let report = `餐厅缺货统计汇总报告\n`;
+                report += `生成时间: ${new Date().toLocaleString('zh-CN')}\n`;
+                report += `统计日期: ${today}\n\n`;
+                
+                report += `=== 总体统计 ===\n`;
+                report += `总缺货项数: ${todayShortages.length}\n`;
+                report += `涉及类别数: ${Object.keys(categoryStats).length}\n\n`;
+                
+                report += `=== 按类别统计 ===\n`;
+                Object.entries(categoryStats)
+                    .sort((a, b) => b[1] - a[1])
+                    .forEach(([category, count]) => {
+                        report += `${category}: ${count}项\n`;
+                    });
+                
+                report += `\n=== 按缺货程度统计 ===\n`;
+                Object.entries(levelStats)
+                    .sort((a, b) => b[1] - a[1])
+                    .forEach(([level, count]) => {
+                        report += `${level}: ${count}项\n`;
+                    });
+                
+                report += `\n=== 详细缺货清单 ===\n`;
+                todayShortages.forEach((s, index) => {
+                    report += `${index + 1}. ${s.productName} (${s.category}) - ${s.shortageLevel}\n`;
+                    report += `   上报人: ${s.reporter} | 时间: ${s.timestamp}\n`;
+                    if (s.notes) report += `   备注: ${s.notes}\n`;
+                    report += `\n`;
+                });
+
+                this.downloadFile(report, `缺货汇总报告_${today}.txt`, 'text/plain');
+                this.showMessage('汇总报告导出成功！', 'success');
+            }
+
+            // 显示历史数据弹窗
+            showHistoryModal() {
+                // 简化版暂不支持历史数据
+                alert('简化版暂不支持历史数据功能');
+            }
+
+            // 下载文件
+            downloadFile(content, filename, mimeType) {
+                const blob = new Blob([content], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            }
+
+            // 显示消息
+            showMessage(message, type = 'info') {
+                const messageEl = document.createElement('div');
+                messageEl.className = `message message-${type}`;
+                messageEl.textContent = message;
+                messageEl.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    padding: 15px 20px;
+                    border-radius: 10px;
+                    color: white;
+                    font-weight: 500;
+                    z-index: 1000;
+                    animation: slideIn 0.3s ease;
+                    max-width: 300px;
+                `;
+
+                const colors = {
+                    success: '#27ae60',
+                    warning: '#f39c12',
+                    error: '#e74c3c',
+                    info: '#3498db'
+                };
+                messageEl.style.backgroundColor = colors[type] || colors.info;
+
+                document.body.appendChild(messageEl);
+
+                setTimeout(() => {
+                    messageEl.style.animation = 'slideOut 0.3s ease';
+                    setTimeout(() => {
+                        if (messageEl.parentNode) {
+                            messageEl.parentNode.removeChild(messageEl);
+                        }
+                    }, 300);
+                }, 3000);
+            }
+        }
+
+        // 添加CSS动画
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+            }
+            
+            @keyframes slideOut {
+                from {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+                to {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            // 检查是否有保存的用户身份
+            const savedUser = localStorage.getItem('currentUser');
+            if (savedUser) {
+                document.getElementById('userName').value = savedUser;
+                // 自动填充上报人字段
+                document.getElementById('reporter').value = savedUser;
+                document.getElementById('reporter').placeholder = `当前用户：${savedUser}`;
+                document.getElementById('reporter').readOnly = true;
+            }
+            
+            new SimpleMultiUserTracker();
+        });
+    </script>
+</body>
+</html>
